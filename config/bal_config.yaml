@@ -20,6 +20,10 @@ modules :
   - grid
   - ngmix_catalog
   - des_star_catalog
+  - input_cosmos_chromatic
+  - scene_chromatic
+  - cosmos_chromatic_stamp
+
 
 # These variables are not directly processed by GalSim; this simply allows a convenient way
 # to change multiple variable instances quickly throughout the config file.
@@ -30,21 +34,25 @@ some_variables :
   # - &max_fft 16384
   # - &max_fft 8192
   # - &max_fft 4096 # GalSim default (likely want higher)
-  - &bal_dir '/path/to/baldir/'
-  - &ngmix_dir '/path/to/ngmix/'
-  - &ngmix_file 'y3_balrog_test_input.fits' # for example
-  - &star_dir '/data/des20.b/data/sallam/Yanny-balrog/5sigma/'
+  - &bal_dir '/home/jemcclea/data2/thesis_project/Balrog-GalSim'
+  - &cosmos_dir '/home/jemcclea/data2/Software/share/galsim/COSMOS_23.5_training_sample'
+  - &cosmos_file 'real_galaxy_catalog_23.5.fits'
+  - &filter_dir '/home/jemcclea/data2/thesis_project/Balrog-GalSim/inputs/filters'
 
 # Define the input files
 input :
-    ngmix_catalog :
+    cosmos_chromatic_catalog :
       # Replace with your desired ngmix catalog!
-      dir : *ngmix_dir
-      file_name : *ngmix_file
+      dir : *cosmos_dir
+      file_name : *cosmos_file
+      use_filter_tables : False
+      filter_dir : *filter_dir
+      use_real: False
+      
 
       # Choose which type of ngmix catalog you are inputting
       # NB: for now, only Gauss, CM, and CM-MOF are accepted
-      catalog_type : 'mof'
+      #catalog_type : 'mof'
       # catalog_type : 'cm'
       # catalog_type : 'gauss'
       # NOTE: If you don't specify an input type, the loader will attempt to determine the type
@@ -54,30 +62,57 @@ input :
       # NOTE: Do not set bands here! They are set for each image simulation separately.
 
       # Set masking / selection thresholds for catalog
-      t_frac : 0.5
-      t_min : 0.001
-      t_max : 200
-      snr_min : 20.0
+      #t_frac : 0.5
+      #t_min : 0.001
+      #t_max : 200
+      #snr_min : 20.0
 
-    des_star_catalog :
-      base_dir : *star_dir
-      model_type :  'Model_16.5-26.5' # Can select which of Sahar's catalogs you want here
-      data_version : 'y3v02'
+    #des_star_catalog :
+      #base_dir : *star_dir
+      #model_type :  'Model_16.5-26.5' # Can select which of Sahar's catalogs you want here
+      #data_version : 'y3v02'
+
+    #nfw_halo :
+        # NFW mass copied from demo9.yaml
+        #mass : 1e15
+        #conc : 4  # The concentration parameter = virial radius / NFW scale radius
+        #redshift : 0.25  # The redshift of the halo.
+
+        # These next two are optional.  If they are omitted, then (0.3, 0.7) are actually the
+        # defaults.  If you only specify one of them, the other is set so that the total is 1.
+        # But you can define both values so that the total is not 1 if you want.
+        # Radiation is assumed to be zero and dark energy equation of state w = -1.
+        # If you want to include either radiation or more complicated dark energy models,
+        # you'll need to define your own cosmology class and use that in a Python script.
+        # There is no way to include them currently from a config script.
+        #omega_m : 0.3
+        #omega_lam : 0.7
+
+        # Another optional parameter for nfw_halo is halo_pos, which specifies the location
+        # of the halo with respect to the center of the image.  The default is (0,0).
+        #halo_pos : 10,10
 
 # The gal field defines what kind of galaxy profile to use.
 gal :
-    type : List
-    items :
-        - # Galaxy component
-          type : ngmixGalaxy
-          # NOTE: Rotations do not currently work, as they are not consistent between different
-          # exposures. This will be added in a future update!
-          #rotate :
-          #    # Random means uniform within 0-2pi rads
-          #    type : Random
-        - # Star component
-          type : desStar
+    type :  COSMOSChromaticGalaxy
+    #type : Gaussian
+    
+    #shear :
+       #type : G1G2
+       #g1 : 0.2
+       #g2 : 0.5
+       #type : NFWHaloShear
 
+   # magnification :
+       # type : NFWHaloMagnification
+        
+    #redshift : 0.7
+        #type : RandomDistribution
+        #function : x**-1.5
+        #x_min: 0.3
+        #x_max: 2.0
+
+    
     # Here you would normally define various fields such as index to choose which galaxies
     # are injected. The balrog injection script takes care of position / index sampling, so
     # you will likely leave the rest of the field blank.
@@ -100,6 +135,7 @@ stamp :
       maximum_fft_size : *max_fft
     # Since we are using observed PSFs that already include pixel response:
     draw_method : no_pixel
+    
 
 image :
     # For injected images:
@@ -114,11 +150,11 @@ image :
 
     # To use all bands:
     # NOTE: y-band currently not supported
-    bands : 'griz'
+    #bands : 'ugriz'
     # To use a subset:
-    # bands : 'g'
+    bands : 'ugriz'
 
-    version : 'y3v02'
+    version : 'y3v03'
     run_name : 'TEST'
 
     # Can choose to ignore existing image data and only include injected objects
@@ -129,27 +165,28 @@ image :
     # inj_obs_only : {val : True, noise : CCD}
 
     # Can inject objects onto a grid
-    pos_sampling :
-      type : HexGrid
-      grid_spacing : 20 # arcsec
+    #pos_sampling :
+      #type : HexGrid
+      #grid_spacing : 20 # arcsec
 
     # Load WCS from DES chip file
     wcs :
       type : Fits
+      hdu : 1
 
     # Must set galaxy density or total number of injected galaxies per tile
     # NOTE: Set the desired density or number PER realization!
     # NOTE: This is ignored for grid runs in which it doesn't equal the required grid points
     # gal_density : 10 # per arcmin^2
-    n_galaxies : 5000 # per tile
+    n_galaxies : 20000 # per tile
 
     # Set the realizations to be done
     # NOTE: This replaces the old version of the keyword `n_realizations` (although it will
     # still be processed correctly for now). You can pass a single realization value, a range
     # using a dictionary filled with min/max, or a list of individual values:
-    realizations : [1]
-    # realizations : [4]
-    # realizations : {'min' : 2, 'max' : 4}
+    #realizations : [1,2,3,4,5]
+    # realizations : [3]
+    realizations : {'min' : 1, 'max' : 3}
     # realizations : [1, 3, 5]
     # Redefined from earlier versions; now the total number of realizations for this
     # simulation *across all simulations/jobs*!
@@ -157,17 +194,17 @@ image :
     # reals 1, 3, 5 *in this job*. This is needed for consistent catalog sampling
     # for some inputs
     # n_realizations : 5 # for example
-    n_realizations : 1
+    #n_realizations : 1
 
-    xsize: 2048 # DES nullwt chip
-    ysize: 4096 # DES nullwt chip
+    xsize: 2046 # DES nullwt chip
+    ysize: 4094 # DES nullwt chip
 
 output :
     # Number of processors to be used on GalSim injection step
     # NOTE: It is more efficient t put `nproc` here for Balrog, as it will
     # parallelize accross files rather than stamps
-    nproc : 4
-    # nproc : -1 # To use all available cores
+    #nproc : 4
+    nproc : -1 # To use all available cores
 
     # Can include parent-level output directory here as well
     # dir : '/path/to/outdir/'

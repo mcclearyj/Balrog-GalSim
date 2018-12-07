@@ -76,8 +76,8 @@ _supported_psf_types = ['DES_PSFEx']#, 'Piff'}
 _psf_extensions = {'DES_PSFEx' : '.psf'}#, 'Piff' : 'something.piff'}
 
 # TODO: Incorporate postage stamps!
-_supported_input_types = ['ngmix_catalog', 'des_star_catalog', 'cosmos_chromatic_catalog','COSMOScatalog']#, 'postage_stamps'}
-_supported_gal_types = ['ngmix_catalog', 'cosmos_chromatic_catalog','COSMOScatalog']
+_supported_input_types = ['ngmix_catalog', 'des_star_catalog', 'cosmos_chromatic_catalog']#, 'postage_stamps'}
+_supported_gal_types = ['ngmix_catalog', 'cosmos_chromatic_catalog']
 _supported_star_types = ['des_star_catalog']
 
 #-------------------------------------------------------------------------------
