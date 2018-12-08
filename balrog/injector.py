@@ -16,7 +16,12 @@ class AddOnImageBuilder(galsim.config.image_scattered.ScatteredImageBuilder):
     def buildImage(self, config, base, image_num, obj_num, logger):
         im, cv = super(AddOnImageBuilder, self).buildImage(config, base, image_num, obj_num, logger)
         initial_image_name = galsim.config.ParseValue(config, 'initial_image', base, str)[0]
-        initial_image = galsim.fits.read(initial_image_name)
+        try:
+            hduext=config['wcs']['hdu']
+            
+        except:
+            hduext=0
+        initial_image = galsim.fits.read(initial_image_name,hdu=hduext)
         im += initial_image
         return im, cv
 
@@ -70,7 +75,7 @@ class BalrogImageBuilder(AddOnImageBuilder):
                 return super(AddOnImageBuilder, self).buildImage(config, base, image_num, obj_num, logger)
             elif (isinstance(ioo, dict)) and (ioo['value'] is True):
                 # Still want to use existing image if changed to be BKG
-                if (ioo['noise']) and ('BKG' in ioo['noise']):
+                if 'BKG' in ioo['noise']:
                     return super(BalrogImageBuilder, self).buildImage(config, base, image_num, obj_num, logger)
                 else:
                     return super(AddOnImageBuilder, self).buildImage(config, base, image_num, obj_num, logger)
