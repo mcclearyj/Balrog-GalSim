@@ -9,7 +9,6 @@
 #####################################################################
 
 import numpy as np
-from numpy.lib import recfunctions as rf
 import random as rand
 import os, sys, errno
 import cPickle as pickle
@@ -30,20 +29,17 @@ from collections import OrderedDict
 from astropy.io import fits
 from astropy import wcs
 from astropy.table import Table
-import pdb
+
 # Balrog files
 import injector
 import grid
 import filters
-from astropy import units as u
-from astropy.coordinates import SkyCoord
-import string
+
 # Use for debugging
 # import pudb
 
 #-------------------------------------------------------------------------------
 # Important todo's:
-# TODO: Add a cut on TdByTe!
 # TODO: Implement error handling for galaxy injections / gsparams! (Working solution, but need
 #       to look into more detail per Erin)
 # TODO: Clean up evals in add_gs_injection()!
@@ -68,16 +64,15 @@ import string
 # MUST be one of the types. For `supported`, no guarantees are made if input is
 # not one of the types.
 
-# QUESTION: Will we ever use `u`?
-_allowed_bands = 'ugriz'
+_allowed_bands = 'ugrizy'
 
 # TODO: Allow Piff when available!
 _supported_psf_types = ['DES_PSFEx']#, 'Piff'}
 _psf_extensions = {'DES_PSFEx' : '.psf'}#, 'Piff' : 'something.piff'}
 
-# TODO: Incorporate postage stamps!
-_supported_input_types = ['ngmix_catalog', 'des_star_catalog', 'cosmos_chromatic_catalog']#, 'postage_stamps'}
-_supported_gal_types = ['ngmix_catalog', 'cosmos_chromatic_catalog']
+_supported_input_types = ['ngmix_catalog', 'des_star_catalog', 'cosmos_chromatic_catalog',
+                          'meds_catalog']
+_supported_gal_types = ['ngmix_catalog', 'cosmos_chromatic_catalog', 'meds_catalog']
 _supported_star_types = ['des_star_catalog']
 
 #-------------------------------------------------------------------------------
@@ -109,7 +104,6 @@ class Tile(object):
         # Tile index in geometry file list
         tile_names = config.tile_names
         indx = np.where(tile_names == self.tile_name)[0]
-        
         if len(indx) == 0:
             raise ValueError('Tile {} is not contained in the tile list!'.format(self.tile_name))
         elif len(indx) > 1:
@@ -140,7 +134,7 @@ class Tile(object):
         self._setup_bal_config(config)
 
         # Load zeropoint list from file
-        #self._load_zeropoints(config)
+        #self._load_zeropoints(config) -- not general to non-DES images
 
         # Load background images, if needed
         self._load_backgrounds(config)
@@ -163,10 +157,8 @@ class Tile(object):
 
         # In [ramin, ramax, decmin, decmax] format:
         # self.u_area = config.u_areas[:, self.indx]
-        try:
-            self.ramin, self.ramax, self.decmin, self.decmax = config.u_areas[:, self.indx]
-        except:
-            self.ramin, self.ramax, self.decmin, self.decmax = config.u_areas[:]
+        self.ramin, self.ramax, self.decmin, self.decmax = config.u_areas[:, self.indx]
+
         # Account for tiles that cross over 360/0 boundary
         if self.ramin > self.ramax:
             # NOTE: For consistency w/ catalog, leave them flipped from expectation
@@ -207,40 +199,40 @@ class Tile(object):
             ctype1, ctype2 = config.geom['CTYPE1'][self.indx], config.geom['CTYPE2'][self.indx]
             cd1_1, cd1_2 = config.geom['CD1_1'][self.indx], config.geom['CD1_2'][self.indx]
             cd2_1, cd2_2 = config.geom['CD2_1'][self.indx], config.geom['CD2_2'][self.indx]
-
-        # Create WCS object
+            
+            # Create WCS object
             self.wcs = wcs.WCS()
             self.wcs.wcs.crpix = [crpix1, crpix2]
             self.wcs.wcs.crval = [crval1, crval2]
             self.wcs.wcs.ctype = [ctype1, ctype2]
             self.wcs.wcs.cd = [[cd1_1, cd1_2], [cd2_1, cd2_2]]
-
-        # Set pixel information
+            
+            # Set pixel information
             self.pixel_scale = config.geom['PIXELSCALE'][self.indx]
-        # These are (ra, dec) and both 10,000 for DES tiles
+            # These are (ra, dec) and both 10,000 for DES tiles
             self.Npix_x = config.geom['NAXIS1'][self.indx]
             self.Npix_y = config.geom['NAXIS2'][self.indx]
-
+            
         except:
+            # For non-DES chips
             crpix1, crpix2 = config.geom['CRPIX1'], config.geom['CRPIX2']
             crval1, crval2 = config.geom['CRVAL1'], config.geom['CRVAL2']
             ctype1, ctype2 = config.geom['CTYPE1'], config.geom['CTYPE2']
             cd1_1, cd1_2 = config.geom['CD1_1'], config.geom['CD1_2']
             cd2_1, cd2_2 = config.geom['CD2_1'], config.geom['CD2_2']
 
-        # Create WCS object
+            # Create WCS object
             self.wcs = wcs.WCS()
             self.wcs.wcs.crpix = [crpix1, crpix2]
             self.wcs.wcs.crval = [crval1, crval2]
             self.wcs.wcs.ctype = [ctype1, ctype2]
             self.wcs.wcs.cd = [[cd1_1, cd1_2], [cd2_1, cd2_2]]
 
-        # Set pixel information
-            self.pixel_scale = 0.268 # no PIXELSCALE parameter
-            #self.pixel_scale = config.geom['PIXELSCALE']
-        # These are (ra, dec) and both 10,000 for DES tiles
+            # Set pixel information
+            self.pixel_scale = 0.268 # Have to set by hand 
             self.Npix_x = config.geom['NAXIS1']
             self.Npix_y = config.geom['NAXIS2']
+
 
         return
 
@@ -411,36 +403,33 @@ class Tile(object):
                 continue
             # Check that it is an appropriate fits file to be injected into
             for f in file_list:
-                if self.is_chip_image(config, f): self.chip_list[band].append(f)
+                #if self.is_chip_image(config, f):
+                self.chip_list[band].append(f)
 
                 # Grab chip zeropoint for this file
                 # QUESTION: Should we allow chips that aren't in the .dat file and
                 #           just assign a zp of 30?
                 
+                # Add chip to list
+                filename = os.path.join(b_dir, f)
                 try:
                     #zp = self.zeropoints[band][f]
 
-                    filename = os.path.join(b_dir, f)
+                    
                     zp = fits.getheader(filename,1)['MAGZERO_SDSS']
      
                 except:
                     zp = 30
-                # Add chip to list
-                filename = os.path.join(b_dir, f)
-                # pudb.set_trace()
+                
                 self.chips[band].append(Chip(filename, band, config, tile_name=self.tile_name,
                                              zeropoint=zp, tile=self))
-
-        # pudb.set_trace()
 
         return
 
 
     def is_chip_image(self, config, chip_file):
-        
         '''
         Checks if passed file is an appropriate chip injection image given data version.
-        DOES NOT NEED TO BE HERE FOR NON-DES FILES 
         '''
 
         if config.data_version == 'y3v02':
@@ -504,7 +493,7 @@ class Tile(object):
 
                     # Set up proxy catalog
                     gs_config = copy.deepcopy(config.orig_gs_config[0])
-                    gs_config['input'][input_type]['bands'] = 'ugriz'
+                    gs_config['input'][input_type]['bands'] = 'g' # Band doesn't matter
                     gs_config['input'][input_type]['tile'] = self.tile_name
 
                     # Don't need galaxy info, so remove for speed
@@ -573,47 +562,46 @@ class Tile(object):
         if input_type in ['ngmix_catalog', 'cosmos_chromatic_catalog', 'meds_catalog']:
             # input_type = 'ngmix_catalog'
             gal_type = config.input_types['gals']
+            if config.data_version != 'null' :
+                # Generate galaxy positions and indices if this is the first realization
 
-        if config.data_version != 'null':
-            # Generate galaxy positions and indices if this is the first realizatio
+                if realization == config.realizations[0]:
+                    # Can't guarantee galaxy count consistency, so use dicts
+                    self.gals_pos = {}
+                    self.gals_indx = {}
+                    self.Ngals = {}
 
-            if realization == config.realizations[0]:
-                # Can't guarantee galaxy count consistency, so use dicts
-                self.gals_pos = {}
-                self.gals_indx = {}
-                self.Ngals = {}
-                
-                Ng = config.input_nobjects[gal_type]
-                Nr = config.n_realizations
+                    Ng = config.input_nobjects[gal_type]
+                    Nr = config.n_realizations
 
-                for real in config.realizations:
-                    ngals = self.gals_per_real
-                    self.Ngals[real] = ngals
-                    
-                    # pudb.set_trace()
-                    # Generate galaxy coordinates
-                    ps = config.pos_sampling
-                    if ps['type'] == 'uniform':
-                        ra = sample_uniform_ra(self.ramin, self.ramax, self.gals_per_real,
-                                               boundary_cross=self.ra_boundary_cross)
-                        dec = sample_uniform_dec(self.decmin, self.decmax, self.gals_per_real,
-                                                 unit='deg')
-                        self.gals_pos[real] = np.column_stack((ra, dec))
-                        
-                    elif (ps['type']=='RectGrid') or (ps['type']=='HexGrid'):
-                        
+                    for real in config.realizations:
+                        ngals = self.gals_per_real
+                        self.Ngals[real] = ngals
+
                         # pudb.set_trace()
-                        
-                        gs = ps['grid_spacing']
-                        
+                        # Generate galaxy coordinates
+                        ps = config.pos_sampling
+                        if ps['type'] == 'uniform':
+                            ra = sample_uniform_ra(self.ramin, self.ramax, self.gals_per_real,
+                                                boundary_cross=self.ra_boundary_cross)
+                            dec = sample_uniform_dec(self.decmin, self.decmax, self.gals_per_real,
+                                                 unit='deg')
+                            self.gals_pos[real] = np.column_stack((ra, dec))
+
+                        elif (ps['type']=='RectGrid') or (ps['type']=='HexGrid'):
+
+                            # pudb.set_trace()
+
+                            gs = ps['grid_spacing']
+
                             # Rotate grid if asked
-                        try:
-                            r = ps['rotate']
-                            if (isinstance(r, str)) and (r.lower() == 'random'):
-                                if ps['type'] == 'RectGrid':
-                                    self.grid_rot_angle = np.rand.uniform(0., np.pi/2.)
-                                elif ps['type'] == 'HexGrid':
-                                    self.grid_rot_angle = np.rand.uniform(0., np.pi/3.)
+                            try:
+                                r = ps['rotate']
+                                if (isinstance(r, str)) and (r.lower() == 'random'):
+                                    if ps['type'] == 'RectGrid':
+                                        self.grid_rot_angle = np.rand.uniform(0., np.pi/2.)
+                                    elif ps['type'] == 'HexGrid':
+                                        self.grid_rot_angle = np.rand.uniform(0., np.pi/3.)
                                 else:
                                     unit = ps['angle_unit']
                                     if unit == 'deg':
@@ -628,88 +616,93 @@ class Tile(object):
                                         else:
                                             raise ValueError('Grid rotation of {} '.format(r) +
                                                              'rad is not valid!')
-                        except KeyError:
-                            self.grid_rot_angle = 0.0
+                            except KeyError:
+                                self.grid_rot_angle = 0.0
 
                             # Offset grid if asked
-                        try:
-                            o = ps['offset']
-                            if (isinstance(o, str)) and (o.lower() == 'random'):
-                                self.grid_offset = [np.rand.uniform(-gs/2., gs/2.),
-                                                    np.rand.uniform(-gs/2., gs/2.)]
-                            else:
-                                if isinstance(o, list):
-                                    self.grid_offset = list(o)
+                            try:
+                                o = ps['offset']
+                                if (isinstance(o, str)) and (o.lower() == 'random'):
+                                    self.grid_offset = [np.rand.uniform(-gs/2., gs/2.),
+                                                        np.rand.uniform(-gs/2., gs/2.)]
                                 else:
-                                    raise ValueError('Grid offset of {} '.format(r) +
-                                                     'is not an array!')
-                        except KeyError:
-                            self.grid_offset = [0.0, 0.0]
-                            
+                                    if isinstance(o, list):
+                                        self.grid_offset = list(o)
+                                    else:
+                                        raise ValueError('Grid offset of {} '.format(r) +
+                                                         'is not an array!')
+                            except KeyError:
+                                self.grid_offset = [0.0, 0.0]
+
                             try:
                                 self.angle_unit = ps['angle_unit']
                             except KeyError:
                                 self.angle_unit = None
-                                
+
                             # Creates the rectangular grid given tile parameters and calculates the
                             # image / world positions for each object
-                        if ps['type'] == 'RectGrid':
-                            tile_grid = grid.RectGrid(gs, self.wcs, Npix_x=self.Npix_x,
-                                                      Npix_y=self.Npix_y,
-                                                      pixscale=self.pixel_scale,
-                                                      rot_angle = self.grid_rot_angle,
-                                                      angle_unit = self.angle_unit,
-                                                      pos_offset = self.grid_offset)
-                        elif ps['type'] == 'HexGrid':
-                            tile_grid = grid.HexGrid(gs, self.wcs, Npix_x=self.Npix_x,
-                                                     Npix_y=self.Npix_y,
-                                                     pixscale=self.pixel_scale,
-                                                     rot_angle = self.grid_rot_angle,
-                                                     angle_unit = self.angle_unit,
-                                                     pos_offset = self.grid_offset)
+                            if ps['type'] == 'RectGrid':
+                                tile_grid = grid.RectGrid(gs, self.wcs, Npix_x=self.Npix_x,
+                                                          Npix_y=self.Npix_y,
+                                                          pixscale=self.pixel_scale,
+                                                          rot_angle = self.grid_rot_angle,
+                                                          angle_unit = self.angle_unit,
+                                                          pos_offset = self.grid_offset)
+                            elif ps['type'] == 'HexGrid':
+                                tile_grid = grid.HexGrid(gs, self.wcs, Npix_x=self.Npix_x,
+                                                         Npix_y=self.Npix_y,
+                                                         pixscale=self.pixel_scale,
+                                                         rot_angle = self.grid_rot_angle,
+                                                         angle_unit = self.angle_unit,
+                                                         pos_offset = self.grid_offset)
 
-                        self.gals_pos[real] = tile_grid.pos
+                            self.gals_pos[real] = tile_grid.pos
 
-                        # NOTE: We ignore the inputted ngals and use the correct grid value
-                        # instead (user was already warned)
-                        ngals = np.shape(tile_grid.pos)[0]
-                        if ngals != self.gals_per_real:
-                            warnings.warn('The passed n_galaxies : {}'.format(self.gals_per_real) +
-                                          ' does not match the {} needed'.format(ngals) +
-                                          ' for {} with spacing {}.'.format(ps['type'], gs) +
-                                          ' Ignoring input n_galaxies (Only for grids!).')
-                        self.Ngals[real] = ngals
+                            # NOTE: We ignore the inputted ngals and use the correct grid value
+                            # instead (user was already warned)
+                            ngals = np.shape(tile_grid.pos)[0]
+                            if ngals != self.gals_per_real:
+                                warnings.warn('The passed n_galaxies : {}'.format(self.gals_per_real) +
+                                              ' does not match the {} needed'.format(ngals) +
+                                              ' for {} with spacing {}.'.format(ps['type'], gs) +
+                                              ' Ignoring input n_galaxies (Only for grids!).')
+                            self.Ngals[real] = ngals
 
                         # Generate galaxy indices (in input catalog)
                         # NOTE: Nearly all runs will generate a random sample of indices. However,
                         # for some testing it would be nice to use an identical galaxy for all
                         # injections. In this case, the user can set a single index in the 'gal'
                         # section of the global config
-                    try:
-                        orig_indx = config.gs_config[0]['gal']['index']
-                        if type(orig_indx) is int:
-                            # Need to find original index of catalog
-                            gs_config = copy.deepcopy(config.gs_config[0])
-                                # Add dummy band index
-                            #gs_config['input']['ngmix_catalog'].update({'bands':'griz'})
-                            gs_config['input']['cosmos_chromatic_catalog'].update({'bands':'g'})
-                            galsim.config.ProcessInput(gs_config)
-                            cat_proxy = gs_config['input_objs'][input_type][0] # Actually a proxy
-                            cat = cat_proxy.getCatalog()
-                            indx = int(np.where(cat['id']==orig_indx)[0])
-                            indices = indx * np.ones(ngals, dtype='int16')
-                            del cat_proxy
-                            del cat
-                            # Now remove `index` from global config (can cause issues w/
-                            # other input types
-                            self.bal_config[0]['gal'].pop('index', None)
-                        else:
-                            raise TypeError('Can only set a global galaxy index in the ' +
-                                            'config if it is an integer!')
-                    except KeyError:
-                        indices = np.array(rand.sample(xrange(Ng), ngals))
-                        # indices = sample_uniform_indx(0, config.input_nobjects[gal_type], Ng)
-                    self.gals_indx[real] = indices
+                        # pudb.set_trace()
+                        try:
+                            orig_indx = config.gs_config[0]['gal']['index']
+                            if type(orig_indx) is int:
+                                # Need to find original index of catalog
+                                gs_config = copy.deepcopy(config.gs_config[0])
+                                # Add dummy band index (band doesn't matter)
+                                gs_config['input'][input_type].update({'bands':'g'})
+                                galsim.config.ProcessInput(gs_config)
+                                cat_proxy = gs_config['input_objs'][input_type][0] # Actually a proxy
+                                cat = cat_proxy.getCatalog()
+                                if input_type == 'ngmix_catalog':
+                                    indx = int(np.where(cat['id']==orig_indx)[0])
+                                elif input_type == 'meds_catalog':
+                                    # ID's consistent between bands
+                                    b = cat_proxy.getBands()[0]
+                                    indx = int(np.where(cat[b]['id']==orig_indx)[0])
+                                indices = indx * np.ones(ngals, dtype='int16')
+                                del cat_proxy
+                                del cat
+                                # Now remove `index` from global config (can cause issues w/
+                                # other input types
+                                self.bal_config[0]['gal'].pop('index', None)
+                            else:
+                                raise TypeError('Can only set a global galaxy index in the ' +
+                                                'config if it is an integer!')
+                        except KeyError:
+                            indices = np.random.choice(xrange(Ng), size=ngals)
+                            # indices = sample_uniform_indx(0, config.input_nobjects[gal_type], Ng)
+                        self.gals_indx[real] = indices
 
         else:
             raise Exception('No `generate_galaxies()` implementation for input of type ' +
@@ -771,61 +764,16 @@ class Tile(object):
 
         return
 
-
-    def add_nfw_offset(self,j):
-        '''
-        When NFW halo is included, place at center of tile and return
-        offset for chip in question
-        '''        
-        wcs_filen=self.bal_config[j]['image']['wcs']['file_name']
-        wcs_hdu=int(self.bal_config[0]['image']['wcs']['hdu'])
-        xsize=self.bal_config[0]['image']['xsize']
-        ysize=self.bal_config[0]['image']['ysize']
-        
-        # First find central RA/Dec of halo, load into GalSim coord object
-        tile_min=SkyCoord(ra=self.ramin,dec=self.decmin,unit=u.deg)
-        tile_max=SkyCoord(ra=self.ramax,dec=self.decmax,unit=u.deg)
-        dist=tile_min.spherical_offsets_to(tile_max)
-        center_ra=(tile_min.ra+dist[0]/2.0)
-        center_dec=(tile_min.dec+dist[1]/2.0)
-        halocenter=SkyCoord(ra=center_ra,dec=center_dec,unit=u.deg)
- 
-        # Find central RA/Dec of this chip, load into GalSim coord object
-        hdr = fits.getheader(wcs_filen,wcs_hdu)
-        w = wcs.WCS(hdr)
-        chipcoords=w.wcs_pix2world(xsize/2.0,ysize/2.0,1)
-        chipcenter=SkyCoord(ra=chipcoords[0],dec=chipcoords[1],frame='icrs',unit=u.deg)
-        
-        # find offset & add to nfw portion of galsim config file
-        # AFAIK, nfw_inject needs positions in arcsec from center
-        halodist=chipcenter.spherical_offsets_to(halocenter)
-        ra_offset=str(halodist[0].to(u.arcsec)) # string representation of angle
-        ra_offset=string.strip(ra_offset,'arcsec')
-        dec_offset=str(halodist[1].to(u.arcsec))
-        dec_offset=string.strip(dec_offset,'arcsec')
-        
-        return ra_offset,dec_offset
-
-    def these_redshifts(self,j,fitcatalog):
-        
-        ''' 
-        helper function to index into cosmos catalog and return 
-        redshifts of galaxies at those indices
-        '''
-        
-        gal_indices=self.bal_config[j]['gal']['index']['items']
-
-        redshifts=fitcatalog['zphot'][gal_indices]
-
-
-        return redshifts
-
     def add_gs_injection(self, config, chip, inj_indx, inj_pos_im, inj_type):
         '''
         This function appends the global GalSim config with an additional simulation to
         be done using nullwt chip-specific infomation and Balrog injected galaxy/star positions
         in image coordinates.
         '''
+
+        # TODO: This function has gotten unwieldly as Balrog has gotten more complex. We should
+        # restructure this in kind with new input object classes that have their own method for
+        # adding a gs injection to the config
 
         assert len(inj_indx) == len(inj_pos_im)
 
@@ -891,15 +839,11 @@ class Tile(object):
                             'type' : 'Gaussian',
                             'sigma' : sigma
                         }
-            #pdb.set_trace()
-            try:
                 if 'BKG' in self.noise_model:
                     # Use chip background file as initial image instead
                     self.bal_config[i]['image'].update({'initial_image' : chip.bkg_file})
             # Can add more noise models here!
             # elif ...
-            except:
-                pass
 
             # Setup 'input' field (nothing besides dict init, for now)
             self.bal_config[i]['input'] = {}
@@ -977,16 +921,16 @@ class Tile(object):
         else: raise ValueError('For now, only `gals` or `stars` are valid injection types!')
 
         # NOTE: Any extra fields to be set for a given input can be added here.
-        #if (inj_type=='gals') and (input_type=='cosmos_chromatic_catalog'):
+        if (inj_type=='gals') and (input_type=='cosmos_chromatic_catalog'):
             # Set the bandpass
-         #   self.bal_config[i]['stamp'].update({
-         #       'type' : 'COSMOSChromatic',
-         #       'bandpass' : config.filters[chip.band].band_config
-         #   })
+            self.bal_config[i]['stamp'].update({
+                'type' : 'COSMOSChromatic',
+                'bandpass' : config.filters[chip.band].band_config
+            })
 
         # pudb.set_trace()
-        if input_type in ['ngmix_catalog', 'cosmos_chromatic_catalog','des_star_catalog']:
-            # Set the band for injection
+        if input_type in ['ngmix_catalog', 'meds_catalog', 'des_star_catalog']:
+            # Only load into memory the needed band catalog information
             self.bal_config[i]['input'].update({
                 input_type : {'bands' : chip.band}
             })
@@ -1018,27 +962,23 @@ class Tile(object):
             })
 
             # NOTE: Any extra fields to be set for a given input can be added here.
-            # ...
-            
-            
-            
-            try:
-                if (self.bal_config[0]['input']['nfw_halo']) is not None:
-                    self.bal_config[i]['input']['nfw_halo']=copy.deepcopy(self.bal_config[0]['input']['nfw_halo'])
-                    alpha,delta=self.add_nfw_offset(i)
-                    redshifts=self.these_redshifts(i,catalog)
-                    rr=redshifts.tolist()
-                    # print ("for value %d halo offset is '%s,%s'\n") % (i,alpha,delta)
-                    self.bal_config[i]['input']['nfw_halo'].update({
-                            'halo_pos' : '%s,%s' % (alpha,delta)
-                            })
-                    self.bal_config[i]['gal'].update({
-                            'redshift' : {'type' : 'List', 'items' : rr}
-                            })
 
-            except:
-               pass
-            
+            # pudb.set_trace()
+            if input_type == 'meds_catalog':
+                # Only use meds/psf files for needed band
+                b = self.bindx[chip.band]
+                meds_file = [self.bal_config[0]['input'][input_type]['meds_files'][b]]
+                psf_file = [self.bal_config[0]['input'][input_type]['psf_files'][b]]
+                self.bal_config[i]['input'][input_type].update({
+                    'meds_files' : meds_file,
+                    'psf_files' : psf_file
+                })
+
+                # TODO: We should switch all other input gal types to do the same.
+                # Set the injection band
+                self.bal_config[i]['gal'].update({
+                    'band' : chip.band
+                })
 
         #-----------------------------------------------------------------------------------------------
         # If multiple input types, use list structure
@@ -1069,10 +1009,23 @@ class Tile(object):
                 'y' : { 'type' : 'List', 'items' : y }
             })
 
-            # pudb.set_trace()
-
             # NOTE: Any extra fields to be set for a given input can be added here.
-            # ...
+
+            if input_type == 'meds_catalog':
+                # Only use meds/psf files for needed band
+                b = self.bindx[chip.band]
+                meds_file = [self.bal_config[0]['input']['items'][indx]['meds_files'][b]]
+                psf_file = [self.bal_config[0]['input']['items'][indx]['psf_files'][b]]
+                self.bal_config[i]['input']['items'][indx].update({
+                    'meds_files' : meds_file,
+                    'psf_files' : psf_file
+                })
+
+                # TODO: We should switch all other input gal types to do the same.
+                # Set the injection band
+                self.bal_config[i]['gal']['items'][indx].update({
+                    'band' : chip.band
+                })
 
         chip.types_injected += 1
 
@@ -1171,15 +1124,16 @@ class Tile(object):
         if config.sim_gals is True:
             itype = config.input_types['gals']
             outfiles['gals'] = base_outfile + '_gals.fits'
+            # pudb.set_trace()
+            # Now update ra/dec positions for truth catalog
             if itype in ['ngmix_catalog','cosmos_chromatic_catalog']:
                 truth['gals'] = config.input_cats[itype][self.gals_indx[real]]
             elif itype == 'meds_catalog':
-                 # Parametric truth catalog previously loaded in `load_input_catalogs()`
-                 truth['gals'] = config.meds_param_catalog[self.gals_indx[real]]
-                
-            # Now update ra/dec positions for truth catalog
-            #truth['gals'] =rf.append_fields(truth['gals'],'ra',self.gals_pos[self.curr_real][:,0],usemask=False)
-            #truth['gals'] =rf.append_fields(truth['gals'],'dec',self.gals_pos[self.curr_real][:,1],usemask=False)
+                # Parametric truth catalog previously loaded in `load_input_catalogs()`
+                truth['gals'] = config.meds_param_catalog[self.gals_indx[real]]
+            # elif ...
+
+            # Tries multiple column keywords
             self._write_new_positions(truth, 'gals', itype)
 
         if config.sim_stars is True:
@@ -1193,7 +1147,7 @@ class Tile(object):
             else:
                 # Tries multiple column keywords
                 self._write_new_positions(truth, 'stars', itype)
-            
+
         for inj_type, outfile in outfiles.items():
             try:
                 with fitsio.FITS(outfile, 'rw', clobber=True) as truth_table:
@@ -1233,7 +1187,7 @@ class Tile(object):
                 return
 
         return
-    
+
     def _write_new_positions(self, truth_cat, inj_type, in_type):
         # pudb.set_trace()
         if inj_type == 'gals': pos = self.gals_pos
@@ -1321,18 +1275,14 @@ def combine_fits_extensions(combined_file, bal_file, orig_file, config=None):
     Combine other needed image extensions (e.g. weight and mask maps).
     Modified from Nikolay's original version in BalrogPipeline.py.
     '''
-    # Read in simulated image and pre-injection extensions
-    # Had to make some changes for DECam community data...
-    sciIm = fitsio.read(bal_file, ext=0)
-    sciHdr = fitsio.read_header(orig_file, ext=1)
-    origIm, origHdr = fitsio.read(orig_file, ext=1, header=True)   
-    try:
 
-        wgt_me_Im, wgt_me_Hdr = fitsio.read(orig_file, ext=2, header=True)
-        mskIm, mskHdr = fitsio.read(orig_file, ext=3, header=True)
-    except:
-        pass
-    
+    # Read in simulated image and pre-injection extensions
+    sciIm = fitsio.read(bal_file, ext=0)
+    sciHdr = fitsio.read_header(orig_file, ext=0)
+    wgtIm, wgtHdr = fitsio.read(orig_file, ext=1, header=True)
+    wgt_me_Im, wgt_me_Hdr = fitsio.read(orig_file, ext=2, header=True)
+    mskIm, mskHdr = fitsio.read(orig_file, ext=3, header=True)
+
     # If injecting on blank images, then set these to some sensible values
     # pudb.set_trace()
     if config:
@@ -1355,21 +1305,15 @@ def combine_fits_extensions(combined_file, bal_file, orig_file, config=None):
 
     fits = fitsio.FITS(combined_file,'rw')
     fits.write(sciIm, header=sciHdr)
+    fits.write(wgtIm, header=wgtHdr)
+    fits.write(wgt_me_Im, header=wgtHdr)
+    fits.write(mskIm, header=mskHdr)
+
     # Put back EXTNAME into headers
     fits[0].write_key('EXTNAME', 'SCI', comment="Extension name")
-    fits.write(origIm, header=origHdr)
-    try:
-        
-        fits.write(wgt_me_Im, header=wgtHdr)
-        fits.write(mskIm, header=mskHdr)
-        fits[2].write_key('EXTNAME', 'WGT_ME', comment="Extension name")
-        fits[3].write_key('EXTNAME', 'MSK', comment="Extension name")
-
-    except:
-        pass
-
-    # Include original input image for easy comparison!
-    fits[1].write_key('EXTNAME', 'ORIG', comment="Extension name")
+    fits[1].write_key('EXTNAME', 'WGT', comment="Extension name")
+    fits[2].write_key('EXTNAME', 'WGT_ME', comment="Extension name")
+    fits[3].write_key('EXTNAME', 'MSK', comment="Extension name")
 
     return
 
@@ -1414,12 +1358,7 @@ class Chip(object):
         # NOTE: For `inmasked` images, should be 0:4.
         '''
 
-        #self.name = '_'.join(self.fits_filename.split('_')[s_begin:s_end])
-        #self.name = '_'.join(self.fits_filename.split('_')[s_begin:s_end])
-        # This was problematic for my DECam chips, so I'm doing something WAY simpler
-
-        self.name=self.fits_filename.split('.')[0]
-
+        self.name = '_'.join(self.fits_filename.split('_')[s_begin:s_end])
 
         return
 
@@ -1440,7 +1379,7 @@ class Chip(object):
                 # dir and filename separate; must be combined for an absolute path. This is
                 # due to the psf file and chip file being stored in different directories.
                 self.psf_dir = os.path.join(config.tile_dir, self.tile_name, config.psf_dir)
-                self.psf_filename = os.path.join(self.psf_dir, self.name + self.psf_extension)
+                self.psf_filename = os.path.join(self.psf_dir, self.name + '_' + self.psf_extension)
 
             else:
                 # Some basic GalSim psf types will still work, even if not technically supported
@@ -1491,8 +1430,12 @@ class Chip(object):
         normally expect; i.e. IN_PIX: (x,y) ~= (DEC, RA).
         This will affect how we implement contained_in_chip().
         '''
-        
-        hdr = fits.getheader(self.filename,1)
+
+        try:
+            hdr = fits.getheader(self.filename)
+        except:
+            hdr = fits.getheader(self.filename,1)
+
         # Get chip WCS
         self.wcs = wcs.WCS(hdr)
 
@@ -1509,6 +1452,7 @@ class Chip(object):
             self.ramin, self.ramax = min(chip_corners[:,0]), max(chip_corners[:,0])
             self.decmin, self.decmax = min(chip_corners[:,1]), max(chip_corners[:,1])
             self.corners=chip_corners
+
 
         # Round to nearest pixel (very slight offset)
         #NOTE: Should always be (2048x4096), but in principle could allow
@@ -1827,7 +1771,7 @@ class Config(object):
         except KeyError:
             # By default, use griz
             print('Warning: No injection bands were passed in config. Using `griz` by default')
-            self.bands = 'ugriz'
+            self.bands = 'griz'
 
         # Process input 'version'
         try:
@@ -1860,7 +1804,7 @@ class Config(object):
                 inj_objs_only = dict(inj_objs_only)
                 self.inj_objs_only = {}
                 keys = ['value', 'noise']
-                valid_noise = ['CCD', 'BKG', 'BKG+CCD', 'BKG+RN', 'BKG+SKY', 'None',None]
+                valid_noise = ['CCD', 'BKG', 'BKG+CCD', 'BKG+RN', 'BKG+SKY', 'None', None]
 
                 if 'noise' not in inj_objs_only:
                     # Default is no noise
@@ -2050,12 +1994,11 @@ class Config(object):
                 self.u_areas = np.array([uramin, uramax, udecmin, udecmax])
                 self.tile_names = 'A2029' #That's not at all general...
 
-
         return
 
     def _load_input_catalogs(self):
         '''
-        Load any relevant info from the input catalog(s) (for now just ngmix and desStars)
+        Load any relevant info from the input catalog(s)
         '''
 
         # Determine input type
@@ -2088,15 +2031,23 @@ class Config(object):
                     self.sim_gals = True
                     self.input_indx['gals'] = i
                     self.input_types['gals'] = input_type
+
                     # TODO: Can we grab the injection type from the registered GS catalog?
-                    if input_type == 'ngmix_catalog':
-                        import ngmix_catalog
-                        self.inj_types['gals'] = 'ngmixGalaxy'
+                    # pudb.set_trace()
+                    if input_type in ['ngmix_catalog', 'meds_catalog']:
+                        if input_type == 'ngmix_catalog':
+                            from ngmix_catalog import ngmixCatalog as CATMOD
+                            from ngmix_catalog import ngmixCatalogLoader as LOADMOD
+                        if input_type == 'meds_catalog':
+                            from meds_catalog import MEDSCatalog as CATMOD
+                            from meds_catalog import MEDSCatalogLoader as LOADMOD
 
                         # As we are outside of the GalSim executable, we need to register
                         # the input type explicitly
-                        galsim.config.RegisterInputType('ngmix_catalog', ngmix_catalog.ngmixCatalogLoader(
-                            ngmix_catalog.ngmixCatalog, has_nobj=True))
+                        galsim.config.RegisterInputType(input_type, LOADMOD(CATMOD, has_nobj=True))
+
+                        base_cat = input_type.split()[0]
+                        self.inj_types['gals'] = base_cat + 'Galaxy'
 
                         # This avoids a printed warning, and sets up the input correctly
                         # as no bands are passed in bal_config
@@ -2109,9 +2060,8 @@ class Config(object):
                             self.input_zp = 30.0
                         else:
                             # In future, can add updated input parsing
-                            raise ValueError('No input parsing defined for ngmix catalogs for ' +
-                            'data version {}'.format(self.data_version))
-
+                            raise ValueError('No input parsing defined for {} catalogs for ' +
+                            'data version {}. (y3v02 for DES Y3A2)'.format(input_type, self.data_version))
 
                     elif input_type == 'cosmos_chromatic_catalog':
                         self.inj_types['gals'] = 'COSMOSChromaticGalaxy'
@@ -2204,7 +2154,7 @@ class Config(object):
                         raise ValueError
 
                     # Add bands to suppress a warning.
-                    gs_config['input'][input_type]['bands'] = 'ugriz'
+                    gs_config['input'][input_type]['bands'] = 'griz'
 
                     # A tile name is also a required input, so grab the first one
                     tile_list = load_tile_list(self.tile_list, self)
@@ -2236,18 +2186,22 @@ class Config(object):
 
         # Now that we are saving truth tables, it is necessary to load in the entire
         # catalog
+        # TODO: possible race condition here?
         galsim.config.ProcessInput(gs_config)
 
         # Grab needed info from the proxy catalog
         # for i, input_type in enumerate(input_cat_types):
         # for  input_type in enumerate(self.input_types)
-        # pudb.set_trace()
         for input_type in self.input_types.values():
             # Only do this for injection types (gals, stars)
             # if i not in self.input_indx.values(): continue
             cat_proxy = gs_config['input_objs'][input_type][0] # Actually a proxy
             self.input_cats[input_type] = cat_proxy.getCatalog()
             self.input_nobjects[input_type] = cat_proxy.getNObjects()
+
+            # Need to load in additional parametric catalog for MEDSCatalog truth table
+            if input_type == 'meds_catalog':
+                self.meds_param_catalog = cat_proxy.getParamCatalog()
 
         return
 
