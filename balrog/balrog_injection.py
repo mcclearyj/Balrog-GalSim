@@ -236,7 +236,8 @@ class Tile(object):
             self.wcs.wcs.cd = [[cd1_1, cd1_2], [cd2_1, cd2_2]]
 
         # Set pixel information
-            self.pixel_scale = 0.265
+            #self.pixel_scale = 0.265
+            self.pixel_scale = config.geom['PIXELSCALE']
         # These are (ra, dec) and both 10,000 for DES tiles
             self.Npix_x = config.geom['NAXIS1']
             self.Npix_y = config.geom['NAXIS2']
@@ -250,6 +251,7 @@ class Tile(object):
 
         # For convenience of later functions
         self.bands = config.bands
+        self.bindx = dict(zip(self.bands, range(len(self.bands))))
 
         # Will store directory locatations for each band
         self.band_dir = {}
@@ -409,7 +411,7 @@ class Tile(object):
                 continue
             # Check that it is an appropriate fits file to be injected into
             for f in file_list:
-                self.chip_list[band].append(f)
+                if self.is_chip_image(config, f): self.chip_list[band].append(f)
 
                 # Grab chip zeropoint for this file
                 # QUESTION: Should we allow chips that aren't in the .dat file and
@@ -418,8 +420,8 @@ class Tile(object):
                 try:
                     #zp = self.zeropoints[band][f]
 
-                    filen=b_dir+'/'+f
-                    zp = fits.getheader(filen,1)['MAGZERO_SDSS']
+                    filename = os.path.join(b_dir, f)
+                    zp = fits.getheader(filename,1)['MAGZERO_SDSS']
      
                 except:
                     zp = 30
@@ -438,7 +440,7 @@ class Tile(object):
         
         '''
         Checks if passed file is an appropriate chip injection image given data version.
-        DOES NOT NEED TO BE HERE FOR NON-DES STUFF 
+        DOES NOT NEED TO BE HERE FOR NON-DES FILES 
         '''
 
         if config.data_version == 'y3v02':
@@ -568,14 +570,13 @@ class Tile(object):
         '''
 
         input_type = config.input_types['gals']
-        if input_type == 'ngmix_catalog':
-            input_type = 'ngmix_catalog'
+        if input_type in ['ngmix_catalog', 'cosmos_chromatic_catalog', 'meds_catalog']:
+            # input_type = 'ngmix_catalog'
             gal_type = config.input_types['gals']
-        else: gal_type = config.input_types['gals']
-            #if config.data_version == 'y3v02':
-            # Generate galaxy positions and indices if this is the first realization
-        """ That line is NOT general to non-DES runs """
+
         if config.data_version != 'null':
+            # Generate galaxy positions and indices if this is the first realizatio
+
             if realization == config.realizations[0]:
                 # Can't guarantee galaxy count consistency, so use dicts
                 self.gals_pos = {}
@@ -691,7 +692,7 @@ class Tile(object):
                             gs_config = copy.deepcopy(config.gs_config[0])
                                 # Add dummy band index
                             #gs_config['input']['ngmix_catalog'].update({'bands':'griz'})
-                            gs_config['input']['cosmos_chromatic_catalog'].update({'bands':'griz'})
+                            gs_config['input']['cosmos_chromatic_catalog'].update({'bands':'g'})
                             galsim.config.ProcessInput(gs_config)
                             cat_proxy = gs_config['input_objs'][input_type][0] # Actually a proxy
                             cat = cat_proxy.getCatalog()
@@ -984,7 +985,7 @@ class Tile(object):
          #   })
 
         # pudb.set_trace()
-        if input_type in ['ngmix_catalog', 'des_star_catalog']:
+        if input_type in ['ngmix_catalog', 'cosmos_chromatic_catalog','des_star_catalog']:
             # Set the band for injection
             self.bal_config[i]['input'].update({
                 input_type : {'bands' : chip.band}
@@ -1020,7 +1021,6 @@ class Tile(object):
             # ...
             
             
-            #catalog=fitsio.read('/home/jemcclea/data2/Software/share/galsim/COSMOS_23.5_training_sample/real_galaxy_catalog_23.5_fits.fits')
             
             try:
                 if (self.bal_config[0]['input']['nfw_halo']) is not None:
@@ -1169,15 +1169,21 @@ class Tile(object):
                                     '{}_{}_balrog_truth_cat'.format(self.tile_name, real))
 
         if config.sim_gals is True:
+            itype = config.input_types['gals']
             outfiles['gals'] = base_outfile + '_gals.fits'
-            truth['gals'] = config.input_cats[config.input_types['gals']][self.gals_indx[real]]
-            # Now update ra/dec positions for truth catalog
-            # TODO: Make sure this is ok to remove!
-            # if config.input_types['gals'] == 'ngmix_catalog':
-            truth['gals'] =rf.append_fields(truth['gals'],'ra',self.gals_pos[self.curr_real][:,0],usemask=False)
-            truth['gals'] =rf.append_fields(truth['gals'],'dec',self.gals_pos[self.curr_real][:,1],usemask=False)
+            if itype in ['ngmix_catalog','cosmos_chromatic_catalog']:
+                truth['gals'] = config.input_cats[itype][self.gals_indx[real]]
+             elif itype == 'meds_catalog':
+                 # Parametric truth catalog previously loaded in `load_input_catalogs()`
+                 truth['gals'] = config.meds_param_catalog[self.gals_indx[real]]
                 
+            # Now update ra/dec positions for truth catalog
+            #truth['gals'] =rf.append_fields(truth['gals'],'ra',self.gals_pos[self.curr_real][:,0],usemask=False)
+            #truth['gals'] =rf.append_fields(truth['gals'],'dec',self.gals_pos[self.curr_real][:,1],usemask=False)
+            self._write_new_positions(truth, 'gals', itype)
+
         if config.sim_stars is True:
+            itype = config.input_types['stars']
             outfiles['stars'] = base_outfile + '_stars.fits'
             truth['stars'] = config.input_cats[config.input_types['stars']][self.stars_indx[real]]
             # Now update ra/dec positions for truth catalog
@@ -1185,10 +1191,8 @@ class Tile(object):
                 truth['stars']['RA_new'] = self.stars_pos[self.curr_real][:,0]
                 truth['stars']['DEC_new'] = self.stars_pos[self.curr_real][:,1]
             else:
-                #truth['stars']['ra'] = self.stars_pos[self.curr_real][:,0]
-                #truth['stars']['dec'] = self.stars_pos[self.curr_real][:,1]
-                truth['stars']=rf.append_fields(truth['stars'],'ra',self.stars_pos[self.curr_real][:,0],usemask=False)
-                truth['stars']=rf.append_fields(truth['stars'],'dec',self.stars_pos[self.curr_real][:,1],usemask=False)
+                # Tries multiple column keywords
+                self._write_new_positions(truth, 'stars', itype)
             
         for inj_type, outfile in outfiles.items():
             try:
@@ -1227,6 +1231,25 @@ class Tile(object):
                 print('Warning: Injection for tile {}, realization {} failed! '
                     'Skipping truth-table writing.'.format(self.tile_name, self.curr_real))
                 return
+
+        return
+    
+    def _write_new_positions(self, truth_cat, inj_type, in_type):
+        # pudb.set_trace()
+        if inj_type == 'gals': pos = self.gals_pos
+        elif inj_type == 'stars': pos = self.stars_pos
+
+        try:
+            truth_cat[inj_type]['ra'] = pos[self.curr_real][:,0]
+            truth_cat[inj_type]['dec'] = pos[self.curr_real][:,1]
+        except KeyError:
+            try:
+                truth_cat[in_type]['RA'] = pos[self.curr_real][:,0]
+                truth_cat[in_type]['DEC'] = pos[self.curr_real][:,1]
+            except KeyError as e:
+                raise('Tried to write truth positions using column names of ra/dec; RA/DEC.',
+                        'either rename position columns or add an entry for {}'.format(in_type),
+                        'in `write_truth_catalog()`\n',e)
 
         return
 
@@ -1298,12 +1321,6 @@ def combine_fits_extensions(combined_file, bal_file, orig_file, config=None):
     Combine other needed image extensions (e.g. weight and mask maps).
     Modified from Nikolay's original version in BalrogPipeline.py.
     '''
-
-    '''
-    Combine other needed image extensions (e.g. weight and mask maps).
-    Modified from Nikolay's original version in BalrogPipeline.py.
-    '''
-
     # Read in simulated image and pre-injection extensions
     # Had to make some changes for DECam community data...
     sciIm = fitsio.read(bal_file, ext=0)
@@ -1320,7 +1337,12 @@ def combine_fits_extensions(combined_file, bal_file, orig_file, config=None):
     # pudb.set_trace()
     if config:
         if config.inj_objs_only['value'] is True:
-            inv_sky_var = 1.0 / (sciHdr['SKYSIGMA']**2)
+            # TODO: This needs to be generalized for different noise models!
+	    if config.inj_objs_only['noise'] == 'BKG+SKY':
+		noise = sciHdr['SKYSIGMA']
+	    else:
+		noise = np.mean([sciHdr['RDNOISEA'], sciHdr['RDNOISEB']])
+            inv_sky_var = 1.0 / (noise**2)
             wgtIm.fill(inv_sky_var)
             wgt_me_Im.fill(inv_sky_var)
             mskIm.fill(0)
@@ -1333,6 +1355,7 @@ def combine_fits_extensions(combined_file, bal_file, orig_file, config=None):
 
     fits = fitsio.FITS(combined_file,'rw')
     fits.write(sciIm, header=sciHdr)
+    # Put back EXTNAME into headers
     fits[0].write_key('EXTNAME', 'SCI', comment="Extension name")
     fits.write(origIm, header=origHdr)
     try:
@@ -1345,8 +1368,7 @@ def combine_fits_extensions(combined_file, bal_file, orig_file, config=None):
     except:
         pass
 
-    # Put back EXTNAME into headers
-    
+    # Include original input image for easy comparison!
     fits[1].write_key('EXTNAME', 'ORIG', comment="Extension name")
 
     return
@@ -1838,7 +1860,7 @@ class Config(object):
                 inj_objs_only = dict(inj_objs_only)
                 self.inj_objs_only = {}
                 keys = ['value', 'noise']
-                valid_noise = ['CCD', 'BKG', 'BKG+CCD', 'BKG+RN', 'BKG+SKY', 'None']
+                valid_noise = ['CCD', 'BKG', 'BKG+CCD', 'BKG+RN', 'BKG+SKY', 'None',None]
 
                 if 'noise' not in inj_objs_only:
                     # Default is no noise
@@ -2182,7 +2204,7 @@ class Config(object):
                         raise ValueError
 
                     # Add bands to suppress a warning.
-                    gs_config['input'][input_type]['bands'] = 'griz'
+                    gs_config['input'][input_type]['bands'] = 'ugriz'
 
                     # A tile name is also a required input, so grab the first one
                     tile_list = load_tile_list(self.tile_list, self)
