@@ -157,7 +157,10 @@ class Tile(object):
 
         # In [ramin, ramax, decmin, decmax] format:
         # self.u_area = config.u_areas[:, self.indx]
-        self.ramin, self.ramax, self.decmin, self.decmax = config.u_areas[:, self.indx]
+        try:
+            self.ramin, self.ramax, self.decmin, self.decmax = config.u_areas[:, self.indx]
+        except:
+            self.ramin, self.ramax, self.decmin, self.decmax = config.u_areas[:]
 
         # Account for tiles that cross over 360/0 boundary
         if self.ramin > self.ramax:
