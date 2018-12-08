@@ -1173,7 +1173,7 @@ class Tile(object):
             outfiles['gals'] = base_outfile + '_gals.fits'
             if itype in ['ngmix_catalog','cosmos_chromatic_catalog']:
                 truth['gals'] = config.input_cats[itype][self.gals_indx[real]]
-             elif itype == 'meds_catalog':
+            elif itype == 'meds_catalog':
                  # Parametric truth catalog previously loaded in `load_input_catalogs()`
                  truth['gals'] = config.meds_param_catalog[self.gals_indx[real]]
                 
