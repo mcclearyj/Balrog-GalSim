@@ -236,8 +236,8 @@ class Tile(object):
             self.wcs.wcs.cd = [[cd1_1, cd1_2], [cd2_1, cd2_2]]
 
         # Set pixel information
-            #self.pixel_scale = 0.265
-            self.pixel_scale = config.geom['PIXELSCALE']
+            self.pixel_scale = 0.268 # no PIXELSCALE parameter
+            #self.pixel_scale = config.geom['PIXELSCALE']
         # These are (ra, dec) and both 10,000 for DES tiles
             self.Npix_x = config.geom['NAXIS1']
             self.Npix_y = config.geom['NAXIS2']
